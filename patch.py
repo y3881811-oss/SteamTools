@@ -54,7 +54,6 @@ SPLAT_PKGS = ['Splat', 'Splat.Core', 'Splat.Builder', 'Splat.Logging', 'Splat.Dr
 SPLAT_TARGET = '19.4.1'
 
 def force_rewrite_splat(root_dirs):
-    changed = 0
     for root_dir in root_dirs:
         if not os.path.exists(root_dir):
             continue
@@ -78,13 +77,11 @@ def force_rewrite_splat(root_dirs):
                     if content != original:
                         with open(fp, 'w', encoding='utf-8') as f:
                             f.write(content)
-                        changed += 1
-    return changed
 
 force_rewrite_splat(['ref', 'src'])
-print("Splat versions forced to 19.4.1")
+print("Splat versions forced")
 
-# 4. 扫描版本号并补 Directory.Packages.props
+# 4. 扫描版本 + 补 Directory.Packages.props
 def scan_versions(root_dirs):
     versions = {}
     for root_dir in root_dirs:
@@ -146,48 +143,38 @@ if os.path.exists(path):
                 f.write(c)
             print("Patched Directory.Packages.props")
 
-# 5. ★ 新增：修复 SKColorType.Argb4444 在 Android 上不存在的问题
-target_file = 'src/BD.WTTS.Client/Helpers/UI/QRCodeHelper.Net.Codecrete.QrCodeGenerator.SkiaSharp.cs'
-if os.path.exists(target_file):
-    with open(target_file, 'r', encoding='utf-8') as f:
-        c = f.read()
-    original = c
-    # Argb4444 在 Android 的 SkiaSharp 里没有，换成跨平台都有的 Rgba8888
-    c = c.replace('SKColorType.Argb4444', 'SKColorType.Rgba8888')
-    if c != original:
-        with open(target_file, 'w', encoding='utf-8') as f:
-            f.write(c)
-        print("Fixed SKColorType.Argb4444 -> Rgba8888")
-    else:
-        print("WARN: Argb4444 not found in QRCodeHelper, trying global scan...")
-        # 兜底：整个 src/ 目录全局替换
-        for dirpath, dirnames, filenames in os.walk('src'):
+# ★ 5. 修复 SKColorType：枚举在 Android 上被裁剪，改用数字强转
+#    SKColorType.Rgba8888 == 4 (SkiaSharp 里固定值，跨平台一致)
+REPLACEMENTS = {
+    'SKColorType.Argb4444': '(SKColorType)4',
+    'SKColorType.Rgba8888': '(SKColorType)4',
+    'SKColorType.Bgra8888': '(SKColorType)6',
+}
+
+def fix_skcolortype(root_dirs):
+    hits = 0
+    for root_dir in root_dirs:
+        if not os.path.exists(root_dir):
+            continue
+        for dirpath, dirnames, filenames in os.walk(root_dir):
             for fn in filenames:
-                if fn.endswith('.cs'):
-                    fp = os.path.join(dirpath, fn)
-                    try:
-                        with open(fp, 'r', encoding='utf-8') as f:
-                            cc = f.read()
-                    except Exception:
-                        continue
-                    if 'SKColorType.Argb4444' in cc:
-                        cc = cc.replace('SKColorType.Argb4444', 'SKColorType.Rgba8888')
-                        with open(fp, 'w', encoding='utf-8') as f:
-                            f.write(cc)
-                        print(f"  Fixed in {fp}")
-else:
-    print(f"WARN: {target_file} not found, doing global scan...")
-    for dirpath, dirnames, filenames in os.walk('src'):
-        for fn in filenames:
-            if fn.endswith('.cs'):
+                if not fn.endswith('.cs'):
+                    continue
                 fp = os.path.join(dirpath, fn)
                 try:
                     with open(fp, 'r', encoding='utf-8') as f:
-                        cc = f.read()
+                        c = f.read()
                 except Exception:
                     continue
-                if 'SKColorType.Argb4444' in cc:
-                    cc = cc.replace('SKColorType.Argb4444', 'SKColorType.Rgba8888')
+                original = c
+                for k, v in REPLACEMENTS.items():
+                    c = c.replace(k, v)
+                if c != original:
                     with open(fp, 'w', encoding='utf-8') as f:
-                        f.write(cc)
-                    print(f"  Fixed in {fp}")
+                        f.write(c)
+                    hits += 1
+                    print(f"  Fixed SKColorType in: {fp}")
+    return hits
+
+n = fix_skcolortype(['src', 'ref'])
+print(f"Total SKColorType fixes: {n}")
