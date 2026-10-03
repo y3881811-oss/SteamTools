@@ -40,8 +40,13 @@ jobs:
       - name: Run patch script
         run: python3 patch.py
 
+      - name: Clear NuGet cache
+        run: |
+          dotnet nuget locals all --clear
+          rm -rf ~/.nuget/packages/splat ~/.nuget/packages/splat.core ~/.nuget/packages/splat.builder ~/.nuget/packages/splat.logging
+
       - name: Restore
-        run: dotnet restore src/BD.WTTS.Client.Android/BD.WTTS.Client.Android.csproj -p:SignatureValidationMode=accept
+        run: dotnet restore src/BD.WTTS.Client.Android/BD.WTTS.Client.Android.csproj
 
       - name: Publish APK
         run: |
@@ -50,7 +55,6 @@ jobs:
             -p:AndroidPackageFormats=apk \
             -p:RuntimeIdentifier=android-arm64 \
             -p:AndroidKeyStore=false \
-            -p:SignatureValidationMode=accept \
             -o ./publish/android
 
       - name: Upload APK artifact
