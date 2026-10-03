@@ -28,8 +28,107 @@ if os.path.exists(path):
         f.write(c)
     print("Patched TFM props")
 
+# ★ 自动收敛扫描：找出所有需要从 Android 编译中排除的 .cs 文件
+CLIENT_ROOT = 'src/BD.WTTS.Client'
+
+# SkiaSharp 3.x 移除/改动的 API 关键词
+SKIA_KEYWORDS = [
+    'SKFontManager', 'SKTypeface', 'SKEncodedImageFormat', 'SKBitmap',
+    'SKCanvas', 'SKColorType', 'SKImage', 'SKPaint', 'SKPath', 'SKSurface',
+    'SKData', 'SKCodec', 'SKStream',
+]
+
+# 直接被排除文件里定义的类型（初始种子）
+EXCLUDED_TYPES = ['IFontManager', 'IcoEncoder', 'QRCodeHelper']
+
+# 已经确认有问题的种子文件
+SEED_FILES = [
+    'Helpers/UI/QRCodeHelper.Net.Codecrete.QrCodeGenerator.SkiaSharp.cs',
+    'Helpers/UI/QRCodeHelper.Net.Codecrete.QrCodeGenerator.cs',
+    'Helpers/IcoEncoder.cs',
+    'Services/Platform/IPlatformService.Font.cs',
+    'Services/UI/IFontManager.cs',
+    'Services.Implementation/UI/FontManagerImpl.cs',
+]
+
+def file_contains_any(filepath, keywords):
+    try:
+        with open(filepath, 'r', encoding='utf-8') as f:
+            content = f.read()
+    except Exception:
+        return False
+    for kw in keywords:
+        if kw in content:
+            return True
+    return False
+
+def extract_public_types(filepath):
+    types = set()
+    try:
+        with open(filepath, 'r', encoding='utf-8') as f:
+            content = f.read()
+    except Exception:
+        return types
+    for m in re.finditer(
+        r'\b(?:public|internal)\s+(?:sealed\s+|abstract\s+|partial\s+|static\s+)?(?:class|interface|struct|enum|record)\s+(\w+)',
+        content
+    ):
+        types.add(m.group(1))
+    return types
+
+# 迭代扫描
+excluded_set = set(SEED_FILES)
+excluded_types = set(EXCLUDED_TYPES)
+max_iter = 15
+
+for iteration in range(max_iter):
+    new_additions = set()
+
+    for dirpath, dirnames, filenames in os.walk(CLIENT_ROOT):
+        for fn in filenames:
+            if not fn.endswith('.cs'):
+                continue
+            fp = os.path.join(dirpath, fn)
+            rel = os.path.relpath(fp, CLIENT_ROOT).replace('\\', '/')
+
+            if rel in excluded_set:
+                continue
+
+            # 判断是否包含 SkiaSharp 相关关键词
+            has_skia = file_contains_any(fp, SKIA_KEYWORDS)
+            # 判断是否引用了被排除文件里的类型
+            has_excluded_type = False
+            try:
+                with open(fp, 'r', encoding='utf-8') as f:
+                    content = f.read()
+                for t in excluded_types:
+                    if re.search(rf'\b{re.escape(t)}\b', content):
+                        has_excluded_type = True
+                        break
+            except Exception:
+                pass
+
+            if has_skia or has_excluded_type:
+                new_additions.add(rel)
+
+    if not new_additions:
+        print(f"Converged after {iteration} iterations")
+        break
+
+    # 提取新加入文件的 public 类型，扩大下一轮扫描的种子
+    for rel in new_additions:
+        fp = os.path.join(CLIENT_ROOT, rel)
+        excluded_types.update(extract_public_types(fp))
+
+    excluded_set.update(new_additions)
+    print(f"Iteration {iteration}: added {len(new_additions)} files")
+
+print(f"\nTotal excluded files: {len(excluded_set)}")
+for f in sorted(excluded_set):
+    print(f"  - {f}")
+
 # 2. 共享库 csproj
-path = 'src/BD.WTTS.Client/BD.WTTS.Client.csproj'
+path = f'{CLIENT_ROOT}/BD.WTTS.Client.csproj'
 if os.path.exists(path):
     with open(path, 'r', encoding='utf-8') as f:
         c = f.read()
@@ -47,24 +146,31 @@ if os.path.exists(path):
         '<ProjectReference Include="..\\..\\ref\\Facepunch.Steamworks\\Facepunch.Steamworks\\Facepunch.Steamworks.Win64.csproj" Condition="$([MSBuild]::GetTargetPlatformIdentifier(\'$(TargetFramework)\')) == \'windows\'" />'
     )
 
-    if 'EXCLUDE_ANDROID_SKIA' not in c:
-        exclude_block = '''
-  <ItemGroup Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'android'">
-    <!-- EXCLUDE_ANDROID_SKIA -->
-    <Compile Remove="Helpers/UI/QRCodeHelper.Net.Codecrete.QrCodeGenerator.SkiaSharp.cs" />
-    <Compile Remove="Helpers/UI/QRCodeHelper.Net.Codecrete.QrCodeGenerator.cs" />
-    <Compile Remove="Helpers/IcoEncoder.cs" />
-    <Compile Remove="Services/Platform/IPlatformService.Font.cs" />
-    <Compile Remove="Services/UI/IFontManager.cs" />
-    <Compile Remove="Services.Implementation/UI/FontManagerImpl.cs" />
-  </ItemGroup>
-'''
-        c = c.replace('</Project>', exclude_block + '</Project>')
-        print("Injected Android SkiaSharp file exclusion")
+    # 移除旧的排除块（如果存在），重新生成
+    c = re.sub(
+        r'\n  <ItemGroup Condition="\$\(\[MSBuild\]::GetTargetPlatformIdentifier\(\'\$\(TargetFramework\)\'\)\) == \'android\'">\n    <!-- EXCLUDE_ANDROID_SKIA -->.*?</ItemGroup>\n',
+        '\n',
+        c,
+        flags=re.DOTALL
+    )
+
+    # 生成新的排除块
+    exclude_lines = []
+    for rel in sorted(excluded_set):
+        exclude_lines.append(f'    <Compile Remove="{rel}" />')
+
+    exclude_block = (
+        '\n  <ItemGroup Condition="$([MSBuild]::GetTargetPlatformIdentifier(\'$(TargetFramework)\')) == \'android\'">\n'
+        '    <!-- EXCLUDE_ANDROID_SKIA -->\n'
+        + '\n'.join(exclude_lines) + '\n'
+        '  </ItemGroup>\n'
+    )
+
+    c = c.replace('</Project>', exclude_block + '</Project>')
 
     with open(path, 'w', encoding='utf-8') as f:
         f.write(c)
-    print("Patched BD.WTTS.Client.csproj")
+    print("Patched BD.WTTS.Client.csproj with auto-exclusion")
 
 # 3. Splat 版本强制改写
 SPLAT_PKGS = ['Splat', 'Splat.Core', 'Splat.Builder', 'Splat.Logging', 'Splat.Drawing']
