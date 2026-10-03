@@ -1,3 +1,11 @@
 <Project>
-  <Import Project="..\ref\DirectoryPackages\Directory.Packages.props" />
-</Project>
+  <PropertyGroup>
+      <ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>
+        </PropertyGroup>
+          
+            <ItemGroup>
+                <!-- 补充 MAUI 模板需要的包版本 -->
+                    <PackageVersion Include="Microsoft.SourceLink.GitHub" Version="8.0.0" />
+                        <PackageVersion Include="Microsoft.Extensions.Logging.Debug" Version="10.0.0" />
+                          </ItemGroup>
+                          </Project>
