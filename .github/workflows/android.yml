@@ -19,48 +19,92 @@ jobs:
           submodules: recursive
           fetch-depth: 0
 
-      - name: Setup .NET
+      # 1. 删除 global.json，避免 SDK 版本被精确锁定
+      - name: Remove global.json
+        run: rm -f global.json
+
+      # 2. 安装 .NET 11 Preview SDK（仓库代码要求 net11.0）
+      - name: Setup .NET 11 preview
         uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: '10.0.x'
+          dotnet-version: '11.0.x'
+          dotnet-quality: 'preview'
 
+      # 3. 安装 Java
       - name: Setup Java
         uses: actions/setup-java@v4
         with:
           distribution: 'temurin'
           java-version: '17'
 
+      # 4. 安装 MAUI Android 工作负载
       - name: Install .NET workloads
         run: dotnet workload install maui-android
 
-      # 1. 修改共享库的 TFM 配置，让 Linux 环境也生成 android 目标
+      # 5. 修改共享库的 TFM 配置，让 Linux 环境也生成 android 目标
       - name: Patch TFM props
         run: |
-          sed -i "s|<TargetFrameworks Condition=\"\$(\[MSBuild\]::IsOSPlatform('linux'))\">\$(TargetFrameworks)</TargetFrameworks>|<TargetFrameworks Condition=\"\$(\[MSBuild\]::IsOSPlatform('linux'))\">\$(TargetFrameworks);net\$(DotNet_Version)-android</TargetFrameworks>|" src/TFM_NETX_WITH_ALL.props
-          echo "--- TFM props after patch ---"
-          grep "linux" -A2 src/TFM_NETX_WITH_ALL.props
+          python3 - << 'PYEOF'
+          import re
+          path = 'src/TFM_NETX_WITH_ALL.props'
+          with open(path, 'r', encoding='utf-8') as f:
+              content = f.read()
+          # 在 linux 行加入 android 目标
+          new_content = content.replace(
+              "<TargetFrameworks Condition=\"$([MSBuild]::IsOSPlatform('linux'))\">$(TargetFrameworks)</TargetFrameworks>",
+              "<TargetFrameworks Condition=\"$([MSBuild]::IsOSPlatform('linux'))\">$(TargetFrameworks);net$(DotNet_Version)-android</TargetFrameworks>"
+          )
+          # windows 行也加上 android
+          new_content = new_content.replace(
+              "net$(DotNet_Version)-windows10.0.19041.0</TargetFrameworks>",
+              "net$(DotNet_Version)-windows10.0.19041.0;net$(DotNet_Version)-android</TargetFrameworks>"
+          )
+          with open(path, 'w', encoding='utf-8') as f:
+              f.write(new_content)
+          print("=== Patched TFM props ===")
+          print(new_content)
+          PYEOF
 
-      # 2. 修改共享库 csproj：排除 Android 不支持的包和引用
+      # 6. 修改共享库 csproj：排除 Android 不支持的包和引用
       - name: Patch shared library csproj
         run: |
-          # 给 System.Drawing.Common 加 Windows 条件
-          sed -i 's|<PackageReference Include="System.Drawing.Common" />|<PackageReference Include="System.Drawing.Common" Condition="$([MSBuild]::GetTargetPlatformIdentifier('\''$(TargetFramework)'\'')) == '\''windows'\''" />|' src/BD.WTTS.Client/BD.WTTS.Client.csproj
-          # 给 WinAuth 加非 Android 条件
-          sed -i 's|<ProjectReference Include="..\\..\\ref\\WinAuth\\src\\WinAuth\\WinAuth.csproj" />|<ProjectReference Include="..\\..\\ref\\WinAuth\\src\\WinAuth\\WinAuth.csproj" Condition="$([MSBuild]::GetTargetPlatformIdentifier('\''$(TargetFramework)'\'')) != '\''android'\''" />|' src/BD.WTTS.Client/BD.WTTS.Client.csproj
+          python3 - << 'PYEOF'
+          path = 'src/BD.WTTS.Client/BD.WTTS.Client.csproj'
+          with open(path, 'r', encoding='utf-8') as f:
+              content = f.read()
+          # System.Drawing.Common 加 Windows 条件
+          content = content.replace(
+              '<PackageReference Include="System.Drawing.Common" />',
+              '<PackageReference Include="System.Drawing.Common" Condition="$([MSBuild]::GetTargetPlatformIdentifier(\'$(TargetFramework)\')) == \'windows\'" />'
+          )
+          # WinAuth 加非 Android 条件
+          content = content.replace(
+              '<ProjectReference Include="..\\..\\ref\\WinAuth\\src\\WinAuth\\WinAuth.csproj" />',
+              '<ProjectReference Include="..\\..\\ref\\WinAuth\\src\\WinAuth\\WinAuth.csproj" Condition="$([MSBuild]::GetTargetPlatformIdentifier(\'$(TargetFramework)\')) != \'android\'" />'
+          )
+          # Facepunch.Steamworks.Win64 加非 Android 条件（这是 Windows-only）
+          content = content.replace(
+              '<ProjectReference Include="..\\..\\ref\\Facepunch.Steamworks\\Facepunch.Steamworks\\Facepunch.Steamworks.Win64.csproj" />',
+              '<ProjectReference Include="..\\..\\ref\\Facepunch.Steamworks\\Facepunch.Steamworks\\Facepunch.Steamworks.Win64.csproj" Condition="$([MSBuild]::GetTargetPlatformIdentifier(\'$(TargetFramework)\')) == \'windows\'" />'
+          )
+          with open(path, 'w', encoding='utf-8') as f:
+              f.write(content)
+          print("=== Patched BD.WTTS.Client.csproj ===")
+          PYEOF
 
-      # 3. 动态创建 Android 头项目
+      # 7. 动态创建 Android 头项目
       - name: Create Android head project
         run: |
           cd src
           dotnet new maui -n BD.WTTS.Client.Android --force
 
-      # 4. 用自定义 csproj 覆盖模板生成的（只保留 Android，引用共享库）
+      # 8. 覆盖模板生成的 csproj（只保留 Android，引用共享库）
       - name: Overwrite Android csproj
         run: |
           cat > src/BD.WTTS.Client.Android/BD.WTTS.Client.Android.csproj << 'EOF'
           <Project Sdk="Microsoft.NET.Sdk">
             <PropertyGroup>
-              <TargetFramework>net10.0-android</TargetFramework>
+              <TargetFramework>net11.0-android</TargetFramework>
               <OutputType>Exe</OutputType>
               <RootNamespace>BD.WTTS.Client.Android</RootNamespace>
               <UseMaui>true</UseMaui>
@@ -73,6 +117,7 @@ jobs:
               <ApplicationVersion>1</ApplicationVersion>
               <SupportedOSPlatformVersion Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'android'">24.0</SupportedOSPlatformVersion>
             </PropertyGroup>
+
             <ItemGroup>
               <MauiIcon Include="Resources\AppIcon\appicon.svg" ForegroundFile="Resources\AppIcon\appiconfg.svg" Color="#512BD4" />
               <MauiSplashScreen Include="Resources\Splash\splash.svg" Color="#512BD4" BaseSize="128,128" />
@@ -81,30 +126,57 @@ jobs:
               <MauiFont Include="Resources\Fonts\*" />
               <MauiAsset Include="Resources\Raw\**" LogicalName="%(RecursiveDir)%(Filename)%(Extension)" />
             </ItemGroup>
+
             <ItemGroup>
               <PackageReference Include="Microsoft.Maui.Controls" Version="$(MauiVersion)" />
-              <PackageReference Include="Microsoft.Extensions.Logging.Debug" Version="10.0.0" />
+              <PackageReference Include="Microsoft.Extensions.Logging.Debug" Version="11.0.0" />
             </ItemGroup>
+
             <ItemGroup>
               <ProjectReference Include="..\BD.WTTS.Client\BD.WTTS.Client.csproj" />
             </ItemGroup>
           </Project>
           EOF
 
-      # 5. 恢复依赖并发布 APK
+      # 9. 补全 Directory.Packages.props 里缺失的包版本
+      - name: Patch Directory.Packages.props
+        run: |
+          python3 - << 'PYEOF'
+          import os
+          path = 'src/Directory.Packages.props'
+          if not os.path.exists(path):
+              print("Directory.Packages.props not found, skipping")
+              exit(0)
+          with open(path, 'r', encoding='utf-8') as f:
+              content = f.read()
+          # 在 </Project> 前插入补充的包版本
+          extra = '''  <ItemGroup>
+    <PackageVersion Include="Microsoft.Extensions.Logging.Debug" Version="11.0.0" />
+    <PackageVersion Include="Microsoft.SourceLink.GitHub" Version="8.0.0" />
+  </ItemGroup>
+'''
+          if 'Microsoft.Extensions.Logging.Debug' not in content:
+              content = content.replace('</Project>', extra + '</Project>')
+          with open(path, 'w', encoding='utf-8') as f:
+              f.write(content)
+          print("=== Patched Directory.Packages.props ===")
+          PYEOF
+
+      # 10. 还原依赖
       - name: Restore
         run: dotnet restore src/BD.WTTS.Client.Android/BD.WTTS.Client.Android.csproj
 
+      # 11. 发布 APK
       - name: Publish APK
         run: |
           dotnet publish src/BD.WTTS.Client.Android/BD.WTTS.Client.Android.csproj \
-            -f net10.0-android -c Release \
+            -f net11.0-android -c Release \
             -p:AndroidPackageFormats=apk \
             -p:RuntimeIdentifier=android-arm64 \
             -p:AndroidKeyStore=false \
             -o ./publish/android
 
-      # 6. 上传 APK
+      # 12. 上传 APK
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
