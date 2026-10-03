@@ -12,6 +12,10 @@ jobs:
   build-android:
     runs-on: ubuntu-latest
 
+    env:
+      DOTNET_NUGET_SIGNATURE_VERIFICATION: "false"
+      NUGET_CERT_REVOCATION_MODE: "offline"
+
     steps:
       - name: Checkout with submodules
         uses: actions/checkout@v4
