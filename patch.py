@@ -70,25 +70,30 @@ def scan_versions(root_dirs):
                         c
                     ):
                         pkg, ver = m.group(1), m.group(2)
-                        versions[pkg] = ver  # 后发现的覆盖，尽量保留最新扫描到的
+                        versions[pkg] = ver
     return versions
 
 scanned = scan_versions(['ref', 'src'])
-print(f"Scanned {len(scanned)} package versions from ref/ and src/")
+print(f"Scanned {len(scanned)} package versions")
 
-# 关键的手动覆盖（依据报错日志里的需要）
+# 手动覆盖：解决 NU1605 降级 + Splat 证书问题
 manual = {
+    # 强制升级 Splat 全家桶到 19.4.1，绕开 19.3.1 的证书撤销
+    "Splat": "19.4.1",
+    "Splat.Core": "19.4.1",
+    "Splat.Builder": "19.4.1",
+    "Splat.Logging": "19.4.1",
+    "Splat.Drawing": "19.4.1",
+    # 其它降级包按错误日志里的实际依赖版本升上去
     "HarfBuzzSharp": "7.3.0.2",
     "fusillade": "5.0.0",
     "Avalonia": "11.3.20",
-    "Splat.Drawing": "19.4.1",
     "SteamKit2": "3.4.0",
     "Microsoft.Extensions.Logging.Debug": "11.0.0",
     "Microsoft.SourceLink.GitHub": "8.0.0",
 }
 scanned.update(manual)
 
-# 需要补的包清单
 required_packages = [
     "AutoMapper", "SharpZipLib", "NLog", "NLog.Extensions.Logging",
     "Net.Codecrete.QrCodeGenerator", "Fleck", "Stun.Net", "System.Linq.Async",
@@ -99,6 +104,8 @@ required_packages = [
     "Microsoft.Extensions.Logging.Console", "Avalonia",
     "HarfBuzzSharp.NativeAssets.Linux", "SkiaSharp.NativeAssets.Linux",
     "Microsoft.Extensions.Logging.Debug", "Microsoft.SourceLink.GitHub",
+    # Splat 全家桶
+    "Splat", "Splat.Core", "Splat.Builder", "Splat.Logging",
 ]
 
 # 4. 修补 Directory.Packages.props
