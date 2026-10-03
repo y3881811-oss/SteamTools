@@ -28,11 +28,12 @@ if os.path.exists(path):
         f.write(c)
     print("Patched TFM props")
 
-# 2. 共享库 csproj
+# 2. 共享库 csproj：排除 Android 不支持的引用 + 排除 SkiaSharp 2.x 专属文件
 path = 'src/BD.WTTS.Client/BD.WTTS.Client.csproj'
 if os.path.exists(path):
     with open(path, 'r', encoding='utf-8') as f:
         c = f.read()
+
     c = c.replace(
         '<PackageReference Include="System.Drawing.Common" />',
         '<PackageReference Include="System.Drawing.Common" Condition="$([MSBuild]::GetTargetPlatformIdentifier(\'$(TargetFramework)\')) == \'windows\'" />'
@@ -45,6 +46,22 @@ if os.path.exists(path):
         '<ProjectReference Include="..\\..\\ref\\Facepunch.Steamworks\\Facepunch.Steamworks\\Facepunch.Steamworks.Win64.csproj" />',
         '<ProjectReference Include="..\\..\\ref\\Facepunch.Steamworks\\Facepunch.Steamworks\\Facepunch.Steamworks.Win64.csproj" Condition="$([MSBuild]::GetTargetPlatformIdentifier(\'$(TargetFramework)\')) == \'windows\'" />'
     )
+
+    # ★ 新增：Android 目标下排除所有使用 SkiaSharp 2.x 旧 API 的文件
+    if 'EXCLUDE_ANDROID_SKIA' not in c:
+        exclude_block = '''
+  <ItemGroup Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'android'">
+    <!-- EXCLUDE_ANDROID_SKIA -->
+    <Compile Remove="Helpers/UI/QRCodeHelper.Net.Codecrete.QrCodeGenerator.SkiaSharp.cs" />
+    <Compile Remove="Helpers/UI/QRCodeHelper.Net.Codecrete.QrCodeGenerator.cs" />
+    <Compile Remove="Helpers/IcoEncoder.cs" />
+    <Compile Remove="Services/Platform/IPlatformService.Font.cs" />
+    <Compile Remove="Services/UI/IFontManager.cs" />
+  </ItemGroup>
+'''
+        c = c.replace('</Project>', exclude_block + '</Project>')
+        print("Injected Android SkiaSharp file exclusion")
+
     with open(path, 'w', encoding='utf-8') as f:
         f.write(c)
     print("Patched BD.WTTS.Client.csproj")
@@ -143,8 +160,7 @@ if os.path.exists(path):
                 f.write(c)
             print("Patched Directory.Packages.props")
 
-# ★ 5. 修复 SKColorType：枚举在 Android 上被裁剪，改用数字强转
-#    SKColorType.Rgba8888 == 4 (SkiaSharp 里固定值，跨平台一致)
+# 5. 修复 SKColorType（之前做的，保留）
 REPLACEMENTS = {
     'SKColorType.Argb4444': '(SKColorType)4',
     'SKColorType.Rgba8888': '(SKColorType)4',
@@ -152,7 +168,6 @@ REPLACEMENTS = {
 }
 
 def fix_skcolortype(root_dirs):
-    hits = 0
     for root_dir in root_dirs:
         if not os.path.exists(root_dir):
             continue
@@ -172,9 +187,6 @@ def fix_skcolortype(root_dirs):
                 if c != original:
                     with open(fp, 'w', encoding='utf-8') as f:
                         f.write(c)
-                    hits += 1
-                    print(f"  Fixed SKColorType in: {fp}")
-    return hits
 
-n = fix_skcolortype(['src', 'ref'])
-print(f"Total SKColorType fixes: {n}")
+fix_skcolortype(['src', 'ref'])
+print("Done")
