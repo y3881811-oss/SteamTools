@@ -38,7 +38,7 @@ jobs:
         run: dotnet workload install maui-android
 
       - name: Run patch script
-        run: python3 scripts/patch.py
+        run: python3 patch.py
 
       - name: Restore
         run: dotnet restore src/BD.WTTS.Client.Android/BD.WTTS.Client.Android.csproj
