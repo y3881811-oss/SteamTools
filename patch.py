@@ -28,7 +28,7 @@ if os.path.exists(path):
         f.write(c)
     print("Patched TFM props")
 
-# 2. 共享库 csproj：排除 Android 不支持的引用 + 排除 SkiaSharp 2.x 专属文件
+# 2. 共享库 csproj
 path = 'src/BD.WTTS.Client/BD.WTTS.Client.csproj'
 if os.path.exists(path):
     with open(path, 'r', encoding='utf-8') as f:
@@ -47,7 +47,6 @@ if os.path.exists(path):
         '<ProjectReference Include="..\\..\\ref\\Facepunch.Steamworks\\Facepunch.Steamworks\\Facepunch.Steamworks.Win64.csproj" Condition="$([MSBuild]::GetTargetPlatformIdentifier(\'$(TargetFramework)\')) == \'windows\'" />'
     )
 
-    # ★ 新增：Android 目标下排除所有使用 SkiaSharp 2.x 旧 API 的文件
     if 'EXCLUDE_ANDROID_SKIA' not in c:
         exclude_block = '''
   <ItemGroup Condition="$([MSBuild]::GetTargetPlatformIdentifier('$(TargetFramework)')) == 'android'">
@@ -57,6 +56,7 @@ if os.path.exists(path):
     <Compile Remove="Helpers/IcoEncoder.cs" />
     <Compile Remove="Services/Platform/IPlatformService.Font.cs" />
     <Compile Remove="Services/UI/IFontManager.cs" />
+    <Compile Remove="Services.Implementation/UI/FontManagerImpl.cs" />
   </ItemGroup>
 '''
         c = c.replace('</Project>', exclude_block + '</Project>')
@@ -160,7 +160,7 @@ if os.path.exists(path):
                 f.write(c)
             print("Patched Directory.Packages.props")
 
-# 5. 修复 SKColorType（之前做的，保留）
+# 5. SKColorType 修复
 REPLACEMENTS = {
     'SKColorType.Argb4444': '(SKColorType)4',
     'SKColorType.Rgba8888': '(SKColorType)4',
