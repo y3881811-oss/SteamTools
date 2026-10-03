@@ -1,7 +1,7 @@
 import os
 import re
 
-# 0. 创建 nuget.config 绕过证书撤销
+# 0. 创建 nuget.config
 with open('nuget.config', 'w', encoding='utf-8') as f:
     f.write('''<?xml version="1.0" encoding="utf-8"?>
 <configuration>
@@ -50,7 +50,48 @@ if os.path.exists(path):
         f.write(content)
     print("Patched BD.WTTS.Client.csproj")
 
-# 3. 从 ref/ 和 src/ 目录扫描真实包版本
+# 3. 强制改写所有 csproj / Directory.Packages.props 里 Splat 相关包的版本号
+SPLAT_PKGS = ['Splat', 'Splat.Core', 'Splat.Builder', 'Splat.Logging', 'Splat.Drawing']
+SPLAT_TARGET = '19.4.1'
+
+def force_rewrite_splat(root_dirs):
+    changed = 0
+    for root_dir in root_dirs:
+        if not os.path.exists(root_dir):
+            continue
+        for dirpath, dirnames, filenames in os.walk(root_dir):
+            for fn in filenames:
+                if fn.endswith('.csproj') or fn == 'Directory.Packages.props':
+                    fp = os.path.join(dirpath, fn)
+                    try:
+                        with open(fp, 'r', encoding='utf-8') as f:
+                            content = f.read()
+                    except Exception:
+                        continue
+                    original = content
+                    for pkg in SPLAT_PKGS:
+                        # 匹配 Include="Splat" ... Version="x.y.z" 或 Version="x.y.z" ... Include="Splat"
+                        content = re.sub(
+                            rf'(<(?:PackageReference|PackageVersion)\s+Include="{re.escape(pkg)}"[^>]*?Version=")[^"]+(")',
+                            rf'\g<1>{SPLAT_TARGET}\g<2>',
+                            content
+                        )
+                        content = re.sub(
+                            rf'(<(?:PackageReference|PackageVersion)\s+Version=")[^"]+("[^>]*?Include="{re.escape(pkg)}")',
+                            rf'\g<1>{SPLAT_TARGET}\g<2>',
+                            content
+                        )
+                    if content != original:
+                        with open(fp, 'w', encoding='utf-8') as f:
+                            f.write(content)
+                        changed += 1
+                        print(f"  Rewrote Splat version in: {fp}")
+    return changed
+
+rewritten = force_rewrite_splat(['ref', 'src'])
+print(f"Rewrote Splat version in {rewritten} files")
+
+# 4. 扫描真实包版本
 def scan_versions(root_dirs):
     versions = {}
     for root_dir in root_dirs:
@@ -69,22 +110,12 @@ def scan_versions(root_dirs):
                         r'<(?:PackageReference|PackageVersion)\s+Include="([^"]+)"\s+Version="([^"]+)"',
                         c
                     ):
-                        pkg, ver = m.group(1), m.group(2)
-                        versions[pkg] = ver
+                        versions[m.group(1)] = m.group(2)
     return versions
 
 scanned = scan_versions(['ref', 'src'])
-print(f"Scanned {len(scanned)} package versions")
 
-# 手动覆盖：解决 NU1605 降级 + Splat 证书问题
 manual = {
-    # 强制升级 Splat 全家桶到 19.4.1，绕开 19.3.1 的证书撤销
-    "Splat": "19.4.1",
-    "Splat.Core": "19.4.1",
-    "Splat.Builder": "19.4.1",
-    "Splat.Logging": "19.4.1",
-    "Splat.Drawing": "19.4.1",
-    # 其它降级包按错误日志里的实际依赖版本升上去
     "HarfBuzzSharp": "7.3.0.2",
     "fusillade": "5.0.0",
     "Avalonia": "11.3.20",
@@ -104,11 +135,9 @@ required_packages = [
     "Microsoft.Extensions.Logging.Console", "Avalonia",
     "HarfBuzzSharp.NativeAssets.Linux", "SkiaSharp.NativeAssets.Linux",
     "Microsoft.Extensions.Logging.Debug", "Microsoft.SourceLink.GitHub",
-    # Splat 全家桶
     "Splat", "Splat.Core", "Splat.Builder", "Splat.Logging",
 ]
 
-# 4. 修补 Directory.Packages.props
 path = 'src/Directory.Packages.props'
 if os.path.exists(path):
     with open(path, 'r', encoding='utf-8') as f:
@@ -126,7 +155,4 @@ if os.path.exists(path):
             new_content = content[:insert_pos] + "\n  <ItemGroup>\n" + missing_items + "  </ItemGroup>\n" + content[insert_pos:]
             with open(path, 'w', encoding='utf-8') as f:
                 f.write(new_content)
-            print("Patched Directory.Packages.props:")
-            print(missing_items)
-        else:
-            print("Warning: </Project> not found")
+            print("Patched Directory.Packages.props")
